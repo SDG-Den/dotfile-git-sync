@@ -1,0 +1,80 @@
+#!/bin/bash
+CONF_DIR=/home/$(whoami)/.config
+
+# take input
+EXPORTDIR="$1"
+if [[ $EXPORTDIR == "" ]]; then
+read -p "which local github repository do you want to use? " EXPORTDIR
+fi
+echo "EXPORTDIR is $EXPORTDIR"
+
+# re-format to remove ~
+if [[ $(echo $EXPORTDIR | cut -d/ -f1) == "~" ]]; then
+EXPORTDIR2=$(echo $EXPORTDIR | sed "s|.*~||" | (echo -n "/home/$(whoami)" && cat))
+echo "EXPORTDIR2 is $EXPORTDIR2"
+else
+EXPORTDIR2=$(echo $EXPORTDIR)
+echo "EXPORTDIR2 is $EXPORTDIR2"
+fi
+
+# show menu
+SELECTED=$(ls "$CONF_DIR" -l --group-directories-first | grep -e '^d.*' | awk '{print $9}' | fzf --layout=reverse --preview="ls -l $CONF_DIR/{}" --multi)
+ 
+#echo "selected is: $SELECTED"
+
+# loop over selected directories in .config
+while read LINE; do
+    # ensure we don't select the .config directory itself
+    if [ "$LINE" != "" ]; then
+    # prevent conflicts by renaming existing files that clash.
+    if [[ -e "$EXPORTDIR2/$LINE" ]]; then
+        mv $EXPORTDIR2/$LINE $EXPORTDIR2/$(echo $LINE)_old_$RANDOM
+        echo "$LINE already exists in $EXPORTDIR, moving..." >&1
+    fi
+    # move the directory out of .config
+    mv $CONF_DIR/$LINE $EXPORTDIR2
+    echo "moving $LINE to $EXPORTDIR2" >&1
+    fi
+done <<< $SELECTED
+
+# clean up old symlinks
+echo "removing old symlinks"
+# get list of items in the export directory
+STORED=$(ls "$EXPORTDIR2" -1 )
+#echo "stored is $STORED"
+
+# loop over exported items
+while read LINE; do
+    echo "checking $CONF_DIR/$LINE"
+    # if it's a symlink, remove it.
+    if [[ -L "$CONF_DIR/$LINE" ]]; then
+    echo "pre-existing symlink detected: $CONF_DIR/$LINE, removing" >&1
+    rm -v "$CONF_DIR/$LINE"
+    # if its a directory, rename it.
+    elif [[ -d "$CONF_DIR/$LINE" ]]; then
+    echo "duplicate directory detected: $CONF_DIR/$LINE. moving dir" >&1
+    mv $CONF_DIR/$LINE $CONF_DIR/$(echo $LINE)_old_$RANDOM
+    fi
+done <<< $STORED
+
+# stow the export directory
+stow -d $EXPORTDIR2 -t $CONF_DIR .
+
+# check if the export dir is a github repo and sync github.
+if [ -e $EXPORTDIR2/.git ]; then
+    echo "github detected"
+    cd $EXPORTDIR2
+    echo "
+dotfile-git-sync - pushed on $(date), added:" >> $EXPORTDIR2/README.md
+    echo "$SELECTED" >> $EXPORTDIR2/README.md
+    git add ./*
+    git commit -m "automatic commit using dotfile-git-sync"
+    git push
+    
+else
+    echo "github not detected"
+fi
+
+echo "If any programs froze or started acting weird, re-start your computer to get them to pick up the configs again"
+
+
